@@ -4,8 +4,15 @@ const router = express.Router();
 const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 
-router.post('/login', [
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // limit each IP to 5 requests per windowMs
+  message: 'Too many login attempts. Please try again later.',
+});
+
+router.post('/login', loginLimiter, [
   body('email').isEmail().normalizeEmail(),
   body('password').escape(),
 ], async (req, res, next) => {
@@ -26,7 +33,18 @@ router.post('/login', [
       return res.status(404).json({ message: 'User not registered.' });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user[0].password);
+    const foundUser = user[0];
+
+    // CHECK EMAIL VERIFICATION STATUS - NEW SECURITY CHECK
+    if (!foundUser.email_verified) {
+      return res.status(403).json({ 
+        message: 'Please verify your email before logging in.',
+        requiresVerification: true,
+        email: email
+      });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, foundUser.password);
     if (!isPasswordValid) {
       return res.status(400).json({ message: 'Invalid email or password.' });
     }
@@ -34,20 +52,20 @@ router.post('/login', [
     const tokenExpiry = rememberMe ? '30d' : '1h';
     const maxAgeMs = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
 
-    const token = jwt.sign({ id: user[0].id }, process.env.JWT_SECRET, { expiresIn: tokenExpiry });
+    const token = jwt.sign({ id: foundUser.id }, process.env.JWT_SECRET, { expiresIn: tokenExpiry });
 
     res.cookie('token', token, {
       httpOnly: true,
-      secure: true, // Make sure your app is running on HTTPS in production
-      sameSite: 'Strict', // or 'Lax' if needed
+      secure: process.env.NODE_ENV === 'production', // Only secure in production
+      sameSite: 'Strict',
       maxAge: maxAgeMs,
     });
 
     res.status(200).json({
       message: 'Login successful',
-      token, // <-- Add this line
-      user_id: user[0].id,
-      onboarding_completed: user[0].onboarding_completed
+      token,
+      user_id: foundUser.id,
+      onboarding_completed: foundUser.onboarding_completed
     });
   } catch (error) {
     next(error);

@@ -82,15 +82,12 @@ const loading = ref(false);
 const errorMessage = ref('');
 const successMessage = ref('');
 
-// Show success message if ?signup=success exists in URL
+// Show success message if ?verified=success exists in URL
 onMounted(() => {
-  if (route.query.signup === 'success') {
+  if (route.query.verified === 'success') {
+    successMessage.value = 'Email verified successfully! You can now log in.';
+  } else if (route.query.signup === 'success') {
     successMessage.value = 'Account created successfully. You can now log in.';
-
-    // Remove the query parameter after 5 seconds
-    setTimeout(() => {
-      router.replace({ query: {} });
-    }, 5000);
   }
 });
 
@@ -101,6 +98,7 @@ const togglePasswordVisibility = () => {
 const handleLogin = async () => {
   loading.value = true;
   errorMessage.value = '';
+  successMessage.value = '';
 
   try {
     const response = await axios.post(`${import.meta.env.VITE_API_URL}/api/login`, {
@@ -125,12 +123,30 @@ const handleLogin = async () => {
       }
     }
   } catch (error) {
-    if (error.response?.status === 422) {
+    console.error('Login error:', error);
+    
+    if (error.response?.status === 403 && error.response?.data?.requiresVerification) {
+      // User needs to verify email
+      errorMessage.value = 'Please verify your email before logging in.';
+      
+      // Show option to go to verification page
+      setTimeout(() => {
+        const shouldRedirect = confirm('Would you like to verify your email now?');
+        if (shouldRedirect) {
+          router.push({ 
+            path: '/otp-verification', 
+            query: { email: error.response.data.email } 
+          });
+        }
+      }, 1000);
+    } else if (error.response?.status === 422) {
       errorMessage.value = 'Email and password are required.';
     } else if (error.response?.status === 404) {
       errorMessage.value = 'User not registered. Please sign up first.';
     } else if (error.response?.status === 400) {
       errorMessage.value = 'Invalid email or password.';
+    } else if (error.response?.status === 429) {
+      errorMessage.value = 'Too many login attempts. Please try again later.';
     } else {
       errorMessage.value = 'Something went wrong. Please try again later.';
     }
